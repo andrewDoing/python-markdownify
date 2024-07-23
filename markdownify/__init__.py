@@ -99,7 +99,8 @@ class MarkdownConverter(object):
         if self.options['strip'] is not None and self.options['convert'] is not None:
             raise ValueError('You may specify either tags to strip or tags to'
                              ' convert, but not both.')
-
+        self.rowspan_cells = {}
+    
     def convert(self, html):
         soup = BeautifulSoup(html, 'html.parser')
         return self.convert_soup(soup)
@@ -387,16 +388,41 @@ class MarkdownConverter(object):
         return '\n\n' + text + '\n\n'
 
     def convert_td(self, el, text, convert_as_inline):
-        colspan = 1
-        if 'colspan' in el.attrs and el['colspan'].isdigit():
-            colspan = int(el['colspan'])
-        return ' ' + text.strip().replace("\n", " ") + ' |' * colspan
+        colspan = int(el.attrs.get('colspan', 1))
+        rowspan = int(el.attrs.get('rowspan', 1))
+        text = text.strip()
+        
+        row_index = el.sourceline  # Using the line number as a simple way to identify rows
+        
+        if rowspan > 1:
+            for i in range(1, rowspan):
+                if row_index + i not in self.rowspan_cells:
+                    self.rowspan_cells[row_index + i] = []
+                self.rowspan_cells[row_index + i].append(text if i == 1 else '')
+
+        return f'| {text} ' * colspan
 
     def convert_th(self, el, text, convert_as_inline):
-        colspan = 1
-        if 'colspan' in el.attrs and el['colspan'].isdigit():
-            colspan = int(el['colspan'])
-        return ' ' + text.strip().replace("\n", " ") + ' |' * colspan
+        colspan = int(el.attrs.get('colspan', 1))
+        rowspan = int(el.attrs.get('rowspan', 1))
+        text = text.strip()
+
+        row_index = el.sourceline  # Using the line number as a simple way to identify rows
+
+        if rowspan > 1:
+            for i in range(1, rowspan):
+                if row_index + i not in self.rowspan_cells:
+                    self.rowspan_cells[row_index + i] = []
+                self.rowspan_cells[row_index + i].append(text if i == 1 else '')
+
+        return f'| {text} ' * colspan
+
+    def handle_rowspan_cells(self, row_index):
+        if row_index in self.rowspan_cells:
+            extra_cells = self.rowspan_cells[row_index]
+            del self.rowspan_cells[row_index]
+            return ''.join([f'| {cell} ' for cell in extra_cells])
+        return ''
 
     def convert_tr(self, el, text, convert_as_inline):
         cells = el.find_all(['td', 'th'])
@@ -426,7 +452,11 @@ class MarkdownConverter(object):
             # print empty headline above this row
             overline += '| ' + ' | '.join([''] * len(cells)) + ' |' + '\n'
             overline += '| ' + ' | '.join(['---'] * len(cells)) + ' |' + '\n'
-        return overline + '|' + text + '\n' + underline
+
+        row_index = el.sourceline  # Using the line number as a simple way to identify rows
+        extra_cells = self.handle_rowspan_cells(row_index)
+        
+        return overline + '|' + text.strip() + extra_cells + '|\n' + underline
 
 
 def markdownify(html, **options):
